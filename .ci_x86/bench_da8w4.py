@@ -106,13 +106,13 @@ def main():
             for b in (None, bias):
                 y = run((a, sa, za), packed, b)
                 ref = reference(a, sa, za, w, sb, zb, b if b is not None else torch.zeros(N), G)
-                err = ((y.double() - ref).abs() / (ref.abs() + 1e-3)).max().item()
+                err = ((y.double() - ref).abs().max() / ref.abs().max()).item()
                 worst = max(worst, err)
                 key = f"{'sym' if sym else 'asym'}_{M}x{N}x{K}_g{G}_{'bias' if b is not None else 'nobias'}"
                 outputs[key] = y
                 res["check"].append({"key": key, "max_rel_err": err})
     res["worst_rel_err"] = worst
-    print(f"worst relative error vs float64 reference: {worst:.3e}")
+    print(f"worst error vs float64 reference (relative to max |ref|): {worst:.3e}")
     torch.save(outputs, os.path.join(args.outdir, f"{args.tag}_outputs.pt"))
 
     if not args.no_bench:
@@ -129,7 +129,7 @@ def main():
     with open(os.path.join(args.outdir, f"{args.tag}.json"), "w") as f:
         json.dump(res, f, indent=1)
 
-    assert worst < 1e-4, f"error too large: {worst}"
+    assert worst < 1e-5, f"error too large: {worst}"
 
 
 if __name__ == "__main__":
