@@ -59,6 +59,10 @@ jobs:
         if: steps.cpu.outputs.ok == 'true'
         run: cd .ci_x86 && python bench_da8w4.py --tag base --outdir results
 
+      - name: New reference test on base kernel
+        if: steps.cpu.outputs.ok == 'true'
+        run: pytest -q test/prototype/test_da8w4_cpu.py -k reference 2>&1 | tail -3
+
       - name: Build new kernel
         if: steps.cpu.outputs.ok == 'true'
         run: |
