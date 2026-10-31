@@ -4,10 +4,6 @@ on:
   push:
     branches: [x86-da8w4-dev]
   workflow_dispatch:
-    inputs:
-      require_vnni:
-        description: "fail early unless the runner has avx512_vnni"
-        default: "true"
 
 env:
   BASE_SHA: b87db29e969d8c5fabe8d6a3126723d56927111a
@@ -17,24 +13,34 @@ jobs:
   bench:
     runs-on: ubuntu-latest
     timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: CPU info
+        id: cpu
         run: |
           lscpu | grep -E "Model name|^CPU\(s\)|Thread|L2|L3"
           echo "ISA: $(grep -o -w -E 'avx2|avx512f|avx512_vnni|avx_vnni|amx_tile' /proc/cpuinfo | sort -u | tr '\n' ' ')"
-          if [ "${{ github.event.inputs.require_vnni || 'true' }}" = "true" ] && ! grep -q -w avx512_vnni /proc/cpuinfo; then
-            echo "::error::runner lacks avx512_vnni"; exit 1
+          if grep -q -w avx512_vnni /proc/cpuinfo && ! grep -q -w amx_tile /proc/cpuinfo; then
+            echo "ok=true" >> $GITHUB_OUTPUT
+          else
+            echo "::notice::shard ${{ matrix.shard }} skipped: no avx512_vnni (or has AMX)"
+            echo "ok=false" >> $GITHUB_OUTPUT
           fi
 
       - uses: actions/setup-python@v5
+        if: steps.cpu.outputs.ok == 'true'
         with:
           python-version: "3.11"
 
       - name: Install deps
+        if: steps.cpu.outputs.ok == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cpu
@@ -42,6 +48,7 @@ jobs:
           python -c "import torch; print(torch.__version__, torch.backends.cpu.get_cpu_capability())"
 
       - name: Build base kernel
+        if: steps.cpu.outputs.ok == 'true'
         run: |
           cp $KERNEL /tmp/new_kernel.cpp
           git show $BASE_SHA:$KERNEL > $KERNEL
@@ -49,25 +56,30 @@ jobs:
           time pip install -e . --no-build-isolation 2>&1 | tail -5
 
       - name: Bench base
+        if: steps.cpu.outputs.ok == 'true'
         run: cd .ci_x86 && python bench_da8w4.py --tag base --outdir results
 
       - name: Build new kernel
+        if: steps.cpu.outputs.ok == 'true'
         run: |
           cp /tmp/new_kernel.cpp $KERNEL
           export USE_CPU_KERNELS=1 MAX_JOBS=$(nproc)
           time pip install -e . --no-build-isolation 2>&1 | tail -5
 
       - name: Bench new
+        if: steps.cpu.outputs.ok == 'true'
         run: cd .ci_x86 && python bench_da8w4.py --tag new --outdir results
 
       - name: Compare
+        if: steps.cpu.outputs.ok == 'true'
         run: cd .ci_x86 && python compare.py results | tee -a $GITHUB_STEP_SUMMARY
 
       - name: Upstream da8w4 tests (new kernel)
+        if: steps.cpu.outputs.ok == 'true'
         run: pytest -q -x test/prototype/test_da8w4_cpu.py 2>&1 | tail -15
 
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && steps.cpu.outputs.ok == 'true'
         with:
-          name: results
+          name: results-${{ matrix.shard }}
           path: .ci_x86/results
